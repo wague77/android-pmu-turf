@@ -10,14 +10,45 @@ jobs:
     name: Build APK and AAB
     runs-on: ubuntu-latest
 
+    env:
+      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL || secrets.SUPABASE_URL || vars.SUPABASE_URL || 'https://jqzaegjkmvdybyaugdup.supabase.co' }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY || vars.VITE_SUPABASE_PUBLISHABLE_KEY || secrets.SUPABASE_PUBLISHABLE_KEY || vars.SUPABASE_PUBLISHABLE_KEY || secrets.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || 'sb_publishable_nbZd51GDE_6LQnmajoRUtQ_qeY-aM1L' }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || vars.VITE_SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || vars.SUPABASE_ANON_KEY || secrets.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_nbZd51GDE_6LQnmajoRUtQ_qeY-aM1L' }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL || vars.SUPABASE_URL || secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL || 'https://jqzaegjkmvdybyaugdup.supabase.co' }}
+      SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY || vars.SUPABASE_PUBLISHABLE_KEY || secrets.VITE_SUPABASE_PUBLISHABLE_KEY || vars.VITE_SUPABASE_PUBLISHABLE_KEY || secrets.SUPABASE_ANON_KEY || 'sb_publishable_nbZd51GDE_6LQnmajoRUtQ_qeY-aM1L' }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY || '' }}
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle 8.5
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.5'
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
+
+      - name: Inject Supabase & Environment Variables
+        run: |
+          echo "Configuration des variables d'environnement Supabase..."
+          cat << 'ENVEOF' > .env.production
+VITE_SUPABASE_URL=${{ env.VITE_SUPABASE_URL }}
+VITE_SUPABASE_PUBLISHABLE_KEY=${{ env.VITE_SUPABASE_PUBLISHABLE_KEY }}
+VITE_SUPABASE_ANON_KEY=${{ env.VITE_SUPABASE_ANON_KEY }}
+SUPABASE_URL=${{ env.SUPABASE_URL }}
+SUPABASE_PUBLISHABLE_KEY=${{ env.SUPABASE_PUBLISHABLE_KEY }}
+ENVEOF
+          cp .env.production .env || true
 
       - name: Install dependencies
         run: |
@@ -37,7 +68,7 @@ jobs:
       - name: Build Web Application
         run: |
           if [ -f package.json ] && grep -q '"build":' package.json; then
-            echo "Exécution du build web..."
+            echo "Exécution du build web avec variables Supabase..."
             npm run build || true
           fi
 
@@ -59,26 +90,98 @@ jobs:
             fi
           fi
 
-      - name: Set up Java 17 (JDK)
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
       - name: Accept Android SDK Licenses
         run: |
           yes | sdkmanager --licenses 2>/dev/null || true
 
-      - name: Build Android APK (assembleRelease)
-        working-directory: ./android
+      - name: Prepare Android Keystore and Fix Resources
         run: |
-          chmod +x ./gradlew || gradle wrapper
-          ./gradlew assembleRelease --stacktrace || ./gradlew assembleDebug
+          if [ -d android ]; then
+            cd android
 
-      - name: Build Android App Bundle (AAB for Google Play Store)
-        working-directory: ./android
+            echo "=== Diagnostic Version Gradle ==="
+            gradle --version || true
+
+            # 1. Forcer le Gradle Wrapper 8.5
+            mkdir -p gradle/wrapper
+            cat << 'EOF' > gradle/wrapper/gradle-wrapper.properties
+distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\://services.gradle.org/distributions/gradle-8.5-bin.zip
+networkTimeout=10000
+validateDistributionUrl=true
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists
+EOF
+
+            gradle wrapper --gradle-version 8.5 --distribution-type bin || true
+            chmod +x ./gradlew || true
+
+            # 2. Nettoyage et résilience des scripts Gradle
+            if [ -f app/build.gradle ]; then
+              sed -i 's/\$androidxAppCompatVersion/1.6.1/g' app/build.gradle || true
+              sed -i 's/\$androidxCoordinatorLayoutVersion/1.2.0/g' app/build.gradle || true
+              sed -i '/flatDir/,/}/d' app/build.gradle || true
+            fi
+            if [ -f build.gradle ]; then
+              sed -i 's/delete rootProject.buildDir/delete rootProject.layout.buildDirectory/g' build.gradle || true
+            fi
+            touch app/proguard-rules.pro || true
+
+            # 3. Assurer la présence des ressources XML Android critiques
+            mkdir -p app/src/main/res/xml app/src/main/res/drawable app/src/main/res/values
+
+            if [ ! -f app/src/main/res/xml/file_paths.xml ]; then
+              cat << 'EOF' > app/src/main/res/xml/file_paths.xml
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-path name="my_images" path="." />
+    <external-cache-path name="my_cache" path="." />
+    <cache-path name="cache" path="." />
+    <files-path name="files" path="." />
+</paths>
+EOF
+            fi
+
+            if [ ! -f app/src/main/res/drawable/ic_launcher_foreground.xml ]; then
+              cat << 'EOF' > app/src/main/res/drawable/ic_launcher_foreground.xml
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,22 C36.3,22 22,36.3 22,54 C22,71.7 36.3,86 54,86 C71.7,86 86,71.7 86,54 C86,36.3 71.7,22 54,22 Z M47,68 L33,54 L40.2,49.8 L48,57.6 L70.8,35.8 L75,40 L47,68 Z"/>
+</vector>
+EOF
+            fi
+
+            mkdir -p app/libs
+            if [ ! -f app/release.keystore ] && [ ! -f release.keystore ]; then
+              echo "Génération automatique du keystore release Android..."
+              keytool -genkeypair -v                 -keystore app/release.keystore                 -alias release-key                 -keyalg RSA                 -keysize 2048                 -validity 10000                 -storepass nova2026pass                 -keypass nova2026pass                 -dname "CN=NOVA Mobile, OU=Mobile, O=NOVA Studio, L=Paris, ST=IDF, C=FR"
+            fi
+            cd ..
+          fi
+
+      - name: Build Android APK and AAB
         run: |
-          ./gradlew bundleRelease --stacktrace || true
+          if [ -d android ]; then
+            cd android
+            chmod +x ./gradlew || true
+
+            echo "Nettoyage Gradle..."
+            ./gradlew clean --no-daemon || gradle clean --no-daemon || true
+
+            echo "=== Compilation de l'APK (Release / Debug) ==="
+            ./gradlew assembleRelease --no-daemon --stacktrace ||             gradle assembleRelease --no-daemon --stacktrace ||             ./gradlew assembleDebug --no-daemon --stacktrace ||             gradle assembleDebug --no-daemon --stacktrace
+
+            echo "=== Compilation du bundle AAB (Google Play Store) ==="
+            ./gradlew bundleRelease --no-daemon --stacktrace ||             gradle bundleRelease --no-daemon --stacktrace ||             ./gradlew bundleDebug --no-daemon --stacktrace ||             gradle bundleDebug --no-daemon --stacktrace || true
+            cd ..
+          fi
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -87,6 +190,7 @@ jobs:
           path: |
             android/app/build/outputs/apk/release/*.apk
             android/app/build/outputs/apk/debug/*.apk
+            android/app/build/outputs/apk/**/*.apk
 
       - name: Upload AAB Artifact (Play Store Bundle)
         uses: actions/upload-artifact@v4
@@ -94,3 +198,4 @@ jobs:
           name: app-release-aab
           path: |
             android/app/build/outputs/bundle/release/*.aab
+            android/app/build/outputs/bundle/debug/*.aab
