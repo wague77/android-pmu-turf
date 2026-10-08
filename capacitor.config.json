@@ -1,0 +1,15 @@
+{
+  "appId": "com.novastudio.pmuturf",
+  "appName": "pmu turf",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "backgroundColor": "#ffffff"
+  }
+}

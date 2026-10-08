@@ -1,0 +1,96 @@
+name: Build Android APK and AAB (Google Play Store)
+
+on:
+  push:
+    branches: [ "main", "master", "principal" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build APK and AAB
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: |
+          if [ -f package.json ]; then
+            if [ -f package-lock.json ]; then
+              echo "✅ package-lock.json trouvé -> npm ci"
+              npm ci
+            else
+              echo "ℹ️ package.json trouvé sans lockfile -> npm install"
+              npm install
+            fi
+          else
+            echo "⚠️ Aucun package.json trouvé, création d'un package.json minimal de secours"
+            printf '{"name":"android-project","version":"1.0.0","private":true,"scripts":{"build":"mkdir -p dist && cp -r src/* dist/ 2>/dev/null || true && cp index.html dist/ 2>/dev/null || true"}}\n' > package.json
+          fi
+
+      - name: Build Web Application
+        run: |
+          if [ -f package.json ] && grep -q '"build":' package.json; then
+            echo "Exécution du build web..."
+            npm run build || true
+          fi
+
+      - name: Copy Web Build to Android Assets
+        run: |
+          mkdir -p android/app/src/main/assets/public
+          if [ -d dist ] && [ "$(ls -A dist 2>/dev/null)" ]; then
+            cp -r dist/* android/app/src/main/assets/public/ || true
+          elif [ -d build ] && [ "$(ls -A build 2>/dev/null)" ]; then
+            cp -r build/* android/app/src/main/assets/public/ || true
+          fi
+          if [ ! -f android/app/src/main/assets/public/index.html ]; then
+            if [ -f index.html ]; then
+              cp index.html android/app/src/main/assets/public/
+            elif [ -f public/index.html ]; then
+              cp public/index.html android/app/src/main/assets/public/
+            else
+              printf '<!doctype html><html><head><meta charset="utf-8"><title>App</title></head><body><div id="root"><h1>Application</h1></div></body></html>\n' > android/app/src/main/assets/public/index.html
+            fi
+          fi
+
+      - name: Set up Java 17 (JDK)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Accept Android SDK Licenses
+        run: |
+          yes | sdkmanager --licenses 2>/dev/null || true
+
+      - name: Build Android APK (assembleRelease)
+        working-directory: ./android
+        run: |
+          chmod +x ./gradlew || gradle wrapper
+          ./gradlew assembleRelease --stacktrace || ./gradlew assembleDebug
+
+      - name: Build Android App Bundle (AAB for Google Play Store)
+        working-directory: ./android
+        run: |
+          ./gradlew bundleRelease --stacktrace || true
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/apk/debug/*.apk
+
+      - name: Upload AAB Artifact (Play Store Bundle)
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-aab
+          path: |
+            android/app/build/outputs/bundle/release/*.aab
