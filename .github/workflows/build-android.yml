@@ -1,8 +1,10 @@
-name: Build Android APK and AAB (Google Play Store)
+name: Build Android APK and AAB
 
 on:
   push:
-    branches: [ "main", "master", "principal" ]
+    branches: ["main", "master", "principal"]
+  pull_request:
+    branches: ["main", "master", "principal"]
   workflow_dispatch:
 
 jobs:
@@ -25,13 +27,13 @@ jobs:
       - name: Set up Java 17 (Temurin)
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: "temurin"
+          java-version: "17"
 
       - name: Setup Gradle 8.5
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.5'
+          gradle-version: "8.5"
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
@@ -41,27 +43,28 @@ jobs:
       - name: Inject Supabase & Environment Variables
         run: |
           echo "Configuration des variables d'environnement Supabase..."
-          cat << 'ENVEOF' > .env.production
-VITE_SUPABASE_URL=${{ env.VITE_SUPABASE_URL }}
-VITE_SUPABASE_PUBLISHABLE_KEY=${{ env.VITE_SUPABASE_PUBLISHABLE_KEY }}
-VITE_SUPABASE_ANON_KEY=${{ env.VITE_SUPABASE_ANON_KEY }}
-SUPABASE_URL=${{ env.SUPABASE_URL }}
-SUPABASE_PUBLISHABLE_KEY=${{ env.SUPABASE_PUBLISHABLE_KEY }}
-ENVEOF
+          printf "VITE_SUPABASE_URL=%s\nVITE_SUPABASE_PUBLISHABLE_KEY=%s\nVITE_SUPABASE_ANON_KEY=%s\nSUPABASE_URL=%s\nSUPABASE_PUBLISHABLE_KEY=%s\n" \
+            "${{ env.VITE_SUPABASE_URL }}" \
+            "${{ env.VITE_SUPABASE_PUBLISHABLE_KEY }}" \
+            "${{ env.VITE_SUPABASE_ANON_KEY }}" \
+            "${{ env.SUPABASE_URL }}" \
+            "${{ env.SUPABASE_PUBLISHABLE_KEY }}" > .env.production
           cp .env.production .env || true
 
       - name: Install dependencies
         run: |
           if [ -f package.json ]; then
             if [ -f package-lock.json ]; then
-              echo "✅ package-lock.json trouvé -> npm ci"
+              echo "package-lock.json trouvé -> npm ci"
               npm ci
             else
-              echo "ℹ️ package.json trouvé sans lockfile -> npm install"
+              echo "package.json trouvé -> npm install"
               npm install
             fi
+          elif [ -f pubspec.yaml ]; then
+            echo "Projet Flutter détecté (pubspec.yaml)"
           else
-            echo "⚠️ Aucun package.json trouvé, création d'un package.json minimal de secours"
+            echo "Création d'un package.json de secours..."
             printf '{"name":"android-project","version":"1.0.0","private":true,"scripts":{"build":"mkdir -p dist && cp -r src/* dist/ 2>/dev/null || true && cp index.html dist/ 2>/dev/null || true"}}\n' > package.json
           fi
 
@@ -74,21 +77,34 @@ ENVEOF
 
       - name: Copy Web Build to Android Assets
         run: |
-          mkdir -p android/app/src/main/assets/public
-          if [ -d dist ] && [ "$(ls -A dist 2>/dev/null)" ]; then
-            cp -r dist/* android/app/src/main/assets/public/ || true
-          elif [ -d build ] && [ "$(ls -A build 2>/dev/null)" ]; then
-            cp -r build/* android/app/src/main/assets/public/ || true
-          fi
-          if [ ! -f android/app/src/main/assets/public/index.html ]; then
-            if [ -f index.html ]; then
-              cp index.html android/app/src/main/assets/public/
-            elif [ -f public/index.html ]; then
-              cp public/index.html android/app/src/main/assets/public/
-            else
-              printf '<!doctype html><html><head><meta charset="utf-8"><title>App</title></head><body><div id="root"><h1>Application</h1></div></body></html>\n' > android/app/src/main/assets/public/index.html
+          if [ -d android ]; then
+            mkdir -p android/app/src/main/assets/public
+            if [ -d dist ] && [ "$(ls -A dist 2>/dev/null)" ]; then
+              cp -r dist/* android/app/src/main/assets/public/ || true
+            elif [ -d build ] && [ "$(ls -A build 2>/dev/null)" ]; then
+              cp -r build/* android/app/src/main/assets/public/ || true
+            fi
+            if [ ! -f android/app/src/main/assets/public/index.html ]; then
+              if [ -f index.html ]; then
+                cp index.html android/app/src/main/assets/public/
+              elif [ -f public/index.html ]; then
+                cp public/index.html android/app/src/main/assets/public/
+              else
+                printf '<!doctype html><html><head><meta charset="utf-8"><title>App</title></head><body><div id="root"><h1>Application</h1></div></body></html>\n' > android/app/src/main/assets/public/index.html
+              fi
             fi
           fi
+
+      - name: Set up Flutter (si projet Flutter)
+        if: hashFiles('pubspec.yaml') != ''
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          cache: true
+
+      - name: Install Flutter dependencies
+        if: hashFiles('pubspec.yaml') != ''
+        run: flutter pub get
 
       - name: Accept Android SDK Licenses
         run: |
@@ -102,85 +118,93 @@ ENVEOF
             echo "=== Diagnostic Version Gradle ==="
             gradle --version || true
 
-            # 1. Forcer le Gradle Wrapper 8.5
+            # 1. Configurer impérativement le Gradle Wrapper 8.5
             mkdir -p gradle/wrapper
-            cat << 'EOF' > gradle/wrapper/gradle-wrapper.properties
-distributionBase=GRADLE_USER_HOME
-distributionPath=wrapper/dists
-distributionUrl=https\://services.gradle.org/distributions/gradle-8.5-bin.zip
-networkTimeout=10000
-validateDistributionUrl=true
-zipStoreBase=GRADLE_USER_HOME
-zipStorePath=wrapper/dists
-EOF
+            printf "distributionBase=GRADLE_USER_HOME\ndistributionPath=wrapper/dists\ndistributionUrl=https\\://services.gradle.org/distributions/gradle-8.5-bin.zip\nnetworkTimeout=10000\nvalidateDistributionUrl=true\nzipStoreBase=GRADLE_USER_HOME\nzipStorePath=wrapper/dists\n" > gradle/wrapper/gradle-wrapper.properties
 
+            # Régénérer le wrapper exécutable compatible 8.5
             gradle wrapper --gradle-version 8.5 --distribution-type bin || true
             chmod +x ./gradlew || true
 
-            # 2. Nettoyage et résilience des scripts Gradle
+            # 2. Nettoyer et réparer automatiquement les scripts Gradle
             if [ -f app/build.gradle ]; then
+              echo "Correction automatique des dépendances et variables Groovy dans app/build.gradle..."
               sed -i 's/\$androidxAppCompatVersion/1.6.1/g' app/build.gradle || true
               sed -i 's/\$androidxCoordinatorLayoutVersion/1.2.0/g' app/build.gradle || true
               sed -i '/flatDir/,/}/d' app/build.gradle || true
             fi
+
             if [ -f build.gradle ]; then
               sed -i 's/delete rootProject.buildDir/delete rootProject.layout.buildDirectory/g' build.gradle || true
             fi
+
             touch app/proguard-rules.pro || true
 
-            # 3. Assurer la présence des ressources XML Android critiques
+            # 3. Garantir la présence des fichiers XML de ressources Android critiques pour processDebugResources
             mkdir -p app/src/main/res/xml app/src/main/res/drawable app/src/main/res/values
 
             if [ ! -f app/src/main/res/xml/file_paths.xml ]; then
-              cat << 'EOF' > app/src/main/res/xml/file_paths.xml
-<?xml version="1.0" encoding="utf-8"?>
-<paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <external-path name="my_images" path="." />
-    <external-cache-path name="my_cache" path="." />
-    <cache-path name="cache" path="." />
-    <files-path name="files" path="." />
-</paths>
-EOF
+              echo "Création de file_paths.xml..."
+              printf '<?xml version="1.0" encoding="utf-8"?>\n<paths xmlns:android="http://schemas.android.com/apk/res/android">\n    <external-path name="my_images" path="." />\n    <external-cache-path name="my_cache" path="." />\n    <cache-path name="cache" path="." />\n    <files-path name="files" path="." />\n</paths>\n' > app/src/main/res/xml/file_paths.xml
             fi
 
             if [ ! -f app/src/main/res/drawable/ic_launcher_foreground.xml ]; then
-              cat << 'EOF' > app/src/main/res/drawable/ic_launcher_foreground.xml
-<?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,22 C36.3,22 22,36.3 22,54 C22,71.7 36.3,86 54,86 C71.7,86 86,71.7 86,54 C86,36.3 71.7,22 54,22 Z M47,68 L33,54 L40.2,49.8 L48,57.6 L70.8,35.8 L75,40 L47,68 Z"/>
-</vector>
-EOF
+              echo "Création de ic_launcher_foreground.xml..."
+              printf '<?xml version="1.0" encoding="utf-8"?>\n<vector xmlns:android="http://schemas.android.com/apk/res/android"\n    android:width="108dp"\n    android:height="108dp"\n    android:viewportWidth="108"\n    android:viewportHeight="108">\n    <path\n        android:fillColor="#FFFFFF"\n        android:pathData="M54,22 C36.3,22 22,36.3 22,54 C22,71.7 36.3,86 54,86 C71.7,86 86,71.7 86,54 C86,36.3 71.7,22 54,22 Z M47,68 L33,54 L40.2,49.8 L48,59.6 L70.8,35.8 L75,40 L47,68 Z"/>\n</vector>\n' > app/src/main/res/drawable/ic_launcher_foreground.xml
             fi
 
+            if [ ! -f app/src/main/res/drawable/ic_launcher_background.xml ]; then
+              echo "Création de ic_launcher_background.xml..."
+              printf '<?xml version="1.0" encoding="utf-8"?>\n<vector xmlns:android="http://schemas.android.com/apk/res/android"\n    android:width="108dp"\n    android:height="108dp"\n    android:viewportWidth="108"\n    android:viewportHeight="108">\n    <path\n        android:fillColor="#4F46E5"\n        android:pathData="M0,0h108v108h-108z"/>\n</vector>\n' > app/src/main/res/drawable/ic_launcher_background.xml
+            fi
+
+            # 4. Créer le keystore de signature release s'il est absent
             mkdir -p app/libs
             if [ ! -f app/release.keystore ] && [ ! -f release.keystore ]; then
               echo "Génération automatique du keystore release Android..."
-              keytool -genkeypair -v                 -keystore app/release.keystore                 -alias release-key                 -keyalg RSA                 -keysize 2048                 -validity 10000                 -storepass nova2026pass                 -keypass nova2026pass                 -dname "CN=NOVA Mobile, OU=Mobile, O=NOVA Studio, L=Paris, ST=IDF, C=FR"
+              keytool -genkeypair -v \
+                -keystore app/release.keystore \
+                -alias release-key \
+                -keyalg RSA \
+                -keysize 2048 \
+                -validity 10000 \
+                -storepass nova2026pass \
+                -keypass nova2026pass \
+                -dname "CN=NOVA Mobile, OU=Mobile, O=NOVA Studio, L=Paris, ST=IDF, C=FR"
             fi
+
             cd ..
           fi
 
-      - name: Build Android APK and AAB
+      - name: Build APK and AAB
         run: |
-          if [ -d android ]; then
+          if [ -f pubspec.yaml ]; then
+            echo "Compilation avec Flutter..."
+            flutter build apk --release
+            flutter build appbundle --release
+          elif [ -d android ]; then
+            echo "Compilation avec Gradle 8.5..."
             cd android
             chmod +x ./gradlew || true
 
-            echo "Nettoyage Gradle..."
+            echo "Nettoyage préliminaire du cache Gradle..."
             ./gradlew clean --no-daemon || gradle clean --no-daemon || true
 
             echo "=== Compilation de l'APK (Release / Debug) ==="
-            ./gradlew assembleRelease --no-daemon --stacktrace ||             gradle assembleRelease --no-daemon --stacktrace ||             ./gradlew assembleDebug --no-daemon --stacktrace ||             gradle assembleDebug --no-daemon --stacktrace
+            ./gradlew assembleRelease --no-daemon --stacktrace || \
+            gradle assembleRelease --no-daemon --stacktrace || \
+            ./gradlew assembleDebug --no-daemon --stacktrace || \
+            gradle assembleDebug --no-daemon --stacktrace
 
             echo "=== Compilation du bundle AAB (Google Play Store) ==="
-            ./gradlew bundleRelease --no-daemon --stacktrace ||             gradle bundleRelease --no-daemon --stacktrace ||             ./gradlew bundleDebug --no-daemon --stacktrace ||             gradle bundleDebug --no-daemon --stacktrace || true
+            ./gradlew bundleRelease --no-daemon --stacktrace || \
+            gradle bundleRelease --no-daemon --stacktrace || \
+            ./gradlew bundleDebug --no-daemon --stacktrace || \
+            gradle bundleDebug --no-daemon --stacktrace || true
+
             cd ..
+          else
+            echo "Aucun dossier Android ou Flutter trouvé."
           fi
 
       - name: Upload APK Artifact
@@ -188,14 +212,20 @@ EOF
         with:
           name: app-release-apk
           path: |
+            build/app/outputs/flutter-apk/*.apk
+            build/app/outputs/apk/**/*.apk
             android/app/build/outputs/apk/release/*.apk
             android/app/build/outputs/apk/debug/*.apk
             android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: warn
 
-      - name: Upload AAB Artifact (Play Store Bundle)
+      - name: Upload AAB Artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release-aab
           path: |
+            build/app/outputs/bundle/**/*.aab
             android/app/build/outputs/bundle/release/*.aab
             android/app/build/outputs/bundle/debug/*.aab
+            android/app/build/outputs/bundle/**/*.aab
+          if-no-files-found: warn
