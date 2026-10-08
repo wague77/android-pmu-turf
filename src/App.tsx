@@ -101,6 +101,12 @@ const formatHeure = (heureDepart: string | null | undefined): string => {
   return "--:--";
 };
 
+const formatCote = (cote: number | undefined | null): string => {
+  if (cote == null) return "–";
+  const str = String(cote).replace(/\./g, ",");
+  return str;
+};
+
 export default function PartantsPMU() {
   const [date, setDate] = useState<Date>(new Date());
   const [selectedDateStr, setSelectedDateStr] = useState<string>(formatDate(new Date()));
@@ -285,15 +291,29 @@ export default function PartantsPMU() {
 
   return (
     <div className="min-h-screen bg-[#0a1f0a] text-[#e8d5a3] font-sans overflow-hidden flex flex-col">
-      {/* HEADER */}
+      {/* HEADER avec logo corrigé (Trophy + badge PMU) */}
       <header className="bg-[#041004] border-b border-[#d4af37] px-4 py-3 flex items-center justify-between shadow-md">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-gradient-to-br from-[#d4af37] to-[#b8972e] rounded-full flex items-center justify-center shadow-inner">
-            <Trophy className="w-6 h-6 text-[#041004]" />
+          {/* Logo corrigé : Trophy dans un badge or avec incrustation PMU */}
+          <div className="relative flex items-center justify-center">
+            <div className="w-11 h-11 bg-gradient-to-br from-[#d4af37] via-[#f0d080] to-[#b8972e] rounded-2xl flex items-center justify-center shadow-[0_0_25px_-3px] shadow-[#d4af37]/60 border border-[#f0d080]/40">
+              <Trophy className="w-7 h-7 text-[#041004]" strokeWidth={2.5} />
+            </div>
+            <div className="absolute -top-1 -right-1 w-5 h-5 bg-[#041004] rounded-xl flex items-center justify-center border-2 border-[#d4af37]">
+              <span className="text-[#d4af37] text-[13px] font-black tracking-[-1px] leading-none mt-px">PMU</span>
+            </div>
           </div>
+          
           <div>
-            <h1 className="text-2xl font-bold tracking-tighter text-white">PARTANTS PMU</h1>
-            <p className="text-[10px] text-[#d4af37] -mt-1">TURF • PRONOS • LIVE</p>
+            <div className="flex items-baseline gap-2">
+              <h1 className="text-3xl font-black tracking-[-2px] text-white">PARTANTS</h1>
+              <div className="text-[#d4af37] text-2xl font-black tracking-widest -ml-1">PMU</div>
+            </div>
+            <p className="text-[10px] text-[#8a9f7a] -mt-1 font-medium flex items-center gap-2">
+              <span className="inline-block w-2 h-px bg-[#d4af37]"></span>
+              PRONOSTICS • TURF • LIVE
+              <span className="inline-block w-2 h-px bg-[#d4af37]"></span>
+            </p>
           </div>
         </div>
         
@@ -514,7 +534,7 @@ export default function PartantsPMU() {
                             <div className="flex-1 min-w-0">
                               <div className="font-semibold text-white truncate">{participant?.nom || 'Inconnu'}</div>
                               <div className="text-xs text-[#8a9f7a]">
-                                {p.cote_prob != null ? Number(p.cote_prob).toFixed(1) : '–'} :1
+                                {formatCote(p.cote_prob)} :1
                               </div>
                             </div>
                             <div className="text-[#6b8a5e] text-xs font-mono">#{index + 1}</div>
@@ -613,7 +633,7 @@ export default function PartantsPMU() {
                               <div className="text-xs text-[#8a9f7a] flex items-center gap-3 mt-1">
                                 <span>{partant.age || 0} ans • {partant.sexe || '—'}</span>
                                 <span className="text-[#d4af37]">•</span>
-                                <span className="font-mono">Cote ~{Number(cote).toFixed(1)}</span>
+                                <span className="font-mono">Cote ~{formatCote(cote)}</span>
                               </div>
                             </div>
                             
